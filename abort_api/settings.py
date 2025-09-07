@@ -31,7 +31,7 @@ CORS_ORIGIN_ALLOW_ALL = True
 
 
 DEFAULT_TEMP_PASSWORD = "123"  
-# Application definition
+
 
 INSTALLED_APPS = [
     'django.contrib.admin',

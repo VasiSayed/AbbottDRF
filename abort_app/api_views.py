@@ -208,7 +208,6 @@ class EventViewSet(viewsets.ModelViewSet):
         methods=["get"],
         permission_classes=[permissions.IsAdminUser],  # ✅ no auth for upcoming
     )
-
     def upcoming(self, request):
         limit_q = request.query_params.get("limit", "5")
         try:
@@ -222,7 +221,7 @@ class EventViewSet(viewsets.ModelViewSet):
     @action(
         detail=False,
         methods=["get"],
-permission_classes=[permissions.IsAdminUser],  # ✅ no auth for featured
+    permission_classes=[permissions.IsAdminUser],  # ✅ no auth for featured
     )
     def featured(self, request):
         code = request.query_params.get("code")
@@ -414,9 +413,9 @@ permission_classes=[permissions.IsAdminUser],  # ✅ no auth for featured
     def register(self, request, code=None):
         """
         POST /api/events/{code}/register/
-        Public registration that creates user+profile, returns JWT tokens,
-        and immediately attempts to join (15 min before start → end).
-        Accepts optional 'password' in payload; otherwise uses a temp password.
+        Public registration that creates or updates user+profile,
+        returns JWT tokens, and immediately attempts to join
+        (15 min before start → end).
         """
         data = request.data or {}
 
@@ -436,43 +435,38 @@ permission_classes=[permissions.IsAdminUser],  # ✅ no auth for featured
 
         email = data["email"].lower().strip()
 
-        # If user exists → tell client to login
-        if User.objects.filter(email=email).exists():
-            return Response(
-                {
-                    "ok": False,
-                    "reason": "account_exists",
-                    "message": "Account already exists. Please login to continue.",
+        # Check if user already exists
+        user = User.objects.filter(email=email).first()
+        if user:
+            # Update profile if needed
+            UserProfile.objects.update_or_create(
+                user=user,
+                defaults={
+                    "hospital": data.get("hospital", "").strip(),
+                    "speciality": data.get("speciality", "").strip(),
+                    "phone": data.get("mobile", "").strip(),
                 },
-                status=409,
+            )
+        else:
+            # Create new account
+            raw_password = (data.get("password") or "").strip()
+            if not raw_password:
+                raw_password = getattr(settings, "DEFAULT_TEMP_PASSWORD", "") or get_random_string(12)
+
+            user = User.objects.create_user(
+                username=email,
+                email=email,
+                first_name=data.get("name", "").strip(),
+                password=raw_password,
+            )
+            UserProfile.objects.create(
+                user=user,
+                hospital=data.get("hospital", "").strip(),
+                speciality=data.get("speciality", "").strip(),
+                phone=data.get("mobile", "").strip(),
             )
 
-        # Choose password (prefer client-provided)
-        raw_password = (data.get("password") or "").strip()
-        if not raw_password:
-            # Prefer a configurable static value in dev, else generate securely
-            raw_password = getattr(settings, "DEFAULT_TEMP_PASSWORD", "") or get_random_string(12)
-            # NOTE: do NOT ship with a weak hardcoded password in production.
-
-        # Create user
-        user = User.objects.create_user(
-            username=email,
-            email=email,
-            first_name=data.get("name", "").strip(),
-            password=raw_password,
-        )
-
-        # Create/update profile
-        UserProfile.objects.update_or_create(
-            user=user,
-            defaults={
-                "hospital": data.get("hospital", "").strip(),
-                "speciality": data.get("speciality", "").strip(),
-                "phone": data.get("mobile", "").strip(),
-            },
-        )
-
-        # Issue JWT tokens so the browser can act as the user immediately
+        # Issue JWT tokens so frontend can act as user immediately
         refresh = RefreshToken.for_user(user)
         access = str(refresh.access_token)
 
@@ -512,7 +506,6 @@ permission_classes=[permissions.IsAdminUser],  # ✅ no auth for featured
                 "ok": bool(link),
                 "link": link,
                 "message": message,
-                # Tokens let the frontend act as the user; no need to reveal password.
                 "tokens": {"access": access, "refresh": str(refresh)},
                 "event": EventSerializer(event, context={"request": request}).data,
             },
